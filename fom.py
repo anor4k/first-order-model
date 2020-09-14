@@ -5,6 +5,7 @@ import yaml
 from argparse import ArgumentParser
 from tqdm import tqdm
 
+import cv2
 import imageio
 import numpy as np
 from skimage.transform import resize
@@ -17,7 +18,6 @@ from modules.keypoint_detector import KPDetector
 from animate import normalize_kp
 from scipy.spatial import ConvexHull
 
-import cv2
 
 if sys.version_info[0] < 3:
     raise Exception("You must use Python 3 or higher. Recommended version is Python 3.7")
@@ -128,9 +128,14 @@ if __name__ == "__main__":
     parser.set_defaults(adapt_scale=False)
 
     opt = parser.parse_args()
+    run_model(config=opt.config, checkpoint=opt.checkpoint, source_image=opt.source_image, driving_video=opt.driving_video, result_video=opt.result_video,
+              relative=opt.relative, adapt_scale=opt.adapt_scale, find_best_frame=opt.find_best_frame, best_frame=opt.best_frame, cpu=opt.cpu)
 
-    source_image = imageio.imread(opt.source_image)
-    reader = imageio.get_reader(opt.driving_video)
+
+def run_model(config: str, checkpoint: str, source_image: str, driving_video: str, result_video: str,
+              relative: bool=True, adapt_scale: bool=True, find_best_frame: bool=False, best_frame: int=None, cpu: bool=False):
+    source_image = imageio.imread(source_image)
+    reader = imageio.get_reader(driving_video)
     fps = reader.get_meta_data()['fps']
     driving_video = []
     try:
@@ -149,20 +154,20 @@ if __name__ == "__main__":
 
     source_image = resize(source_image, (target_height, target_height*np.round(image_height/image_width)))[..., :3]
     driving_video = [resize(frame, (target_height, target_height*np.round(video_height/video_width)))[..., :3] for frame in driving_video]
-    generator, kp_detector = load_checkpoints(config_path=opt.config, checkpoint_path=opt.checkpoint, cpu=opt.cpu)
+    generator, kp_detector = load_checkpoints(config_path=config, checkpoint_path=checkpoint, cpu=cpu)
 
-    if opt.find_best_frame or opt.best_frame is not None:
-        i = opt.best_frame if opt.best_frame is not None else find_best_frame(source_image, driving_video, cpu=opt.cpu)
+    if find_best_frame or best_frame is not None:
+        i = best_frame if best_frame is not None else find_best_frame(source_image, driving_video, cpu=cpu)
         print ("Best frame: " + str(i))
         driving_forward = driving_video[i:]
         driving_backward = driving_video[:(i+1)][::-1]
-        predictions_forward = make_animation(source_image, driving_forward, generator, kp_detector, relative=opt.relative, adapt_movement_scale=opt.adapt_scale, cpu=opt.cpu)
-        predictions_backward = make_animation(source_image, driving_backward, generator, kp_detector, relative=opt.relative, adapt_movement_scale=opt.adapt_scale, cpu=opt.cpu)
+        predictions_forward = make_animation(source_image, driving_forward, generator, kp_detector, relative=relative, adapt_movement_scale=adapt_scale, cpu=cpu)
+        predictions_backward = make_animation(source_image, driving_backward, generator, kp_detector, relative=relative, adapt_movement_scale=adapt_scale, cpu=cpu)
         predictions = predictions_backward[::-1] + predictions_forward[1:]
     else:
-        predictions = make_animation(source_image, driving_video, generator, kp_detector, relative=opt.relative, adapt_movement_scale=opt.adapt_scale, cpu=opt.cpu)
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')
-    out = cv2.VideoWriter(opt.result_video, fourcc, 30000/1001, (256,256))
+        predictions = make_animation(source_image, driving_video, generator, kp_detector, relative=relative, adapt_movement_scale=adapt_scale, cpu=cpu)
+    fourcc = cv2.VideoWriter_fourcc(*'avc1') # needs custom compiled opencv2+ffmpeg with libx264
+    out = cv2.VideoWriter(result_video, fourcc, 30000/1001, (256,256))
     for frame in predictions:
         frame = np.uint8(255*frame)
         out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
